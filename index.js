@@ -29,7 +29,7 @@ async function getStreamUrl(telegramFileId) {
     return `https://api.telegram.org/file/bot${BOT_TOKEN}/${file.file_path}`;
 }
 
-// Catálogo completo
+// Catálogo - SIN AUTENTICACIÓN
 app.get('/api/catalog', async (req, res) => {
     try {
         const movies = await moviesCollection
@@ -38,26 +38,25 @@ app.get('/api/catalog', async (req, res) => {
             .limit(50)
             .toArray();
         
-        const catalog = await Promise.all(movies.map(async (movie) => {
+        const catalog = [];
+        for (const movie of movies) {
             const streamUrl = await getStreamUrl(movie.telegramFileId);
-            return {
+            catalog.push({
                 id: movie._id,
                 title: movie.title,
                 uploadedBy: movie.uploadedBy?.username || 'Anónimo',
                 views: movie.views || 0,
-                uploadedAt: movie.uploadedAt,
-                duration: movie.duration,
                 streamUrl: streamUrl
-            };
-        }));
+            });
+        }
         
         res.json({ success: true, data: catalog });
     } catch (error) {
+        console.error('Error:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 });
 
-// Una película específica
 app.get('/api/movie/:id', async (req, res) => {
     try {
         const { id } = req.params;
@@ -67,12 +66,7 @@ app.get('/api/movie/:id', async (req, res) => {
             return res.status(404).json({ success: false, error: 'No encontrada' });
         }
         
-        // Incrementar vistas
-        await moviesCollection.updateOne(
-            { _id: movie._id },
-            { $inc: { views: 1 } }
-        );
-        
+        await moviesCollection.updateOne({ _id: movie._id }, { $inc: { views: 1 } });
         const streamUrl = await getStreamUrl(movie.telegramFileId);
         
         res.json({
@@ -81,10 +75,8 @@ app.get('/api/movie/:id', async (req, res) => {
                 id: movie._id,
                 title: movie.title,
                 streamUrl: streamUrl,
-                views: (movie.views || 0) + 1,
-                uploadedBy: movie.uploadedBy?.username,
-                uploadedAt: movie.uploadedAt,
-                duration: movie.duration
+                views: movie.views + 1,
+                uploadedBy: movie.uploadedBy?.username
             }
         });
     } catch (error) {
@@ -92,7 +84,6 @@ app.get('/api/movie/:id', async (req, res) => {
     }
 });
 
-// Buscar películas
 app.get('/api/search', async (req, res) => {
     try {
         const { q } = req.query;
@@ -114,8 +105,11 @@ app.get('/api/search', async (req, res) => {
     }
 });
 
+app.get('/', (req, res) => {
+    res.json({ success: true, message: 'Dex TV API Online' });
+});
+
 app.listen(PORT, async () => {
     await connectDB();
-    console.log(`🚀 API corriendo en http://localhost:${PORT}`);
-    console.log(`📡 Probar: http://localhost:${PORT}/api/catalog`);
+    console.log(`🚀 API corriendo en puerto ${PORT}`);
 });
