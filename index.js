@@ -2,7 +2,7 @@ const express = require('express');
 const { Telegraf } = require('telegraf');
 const { MongoClient, ObjectId } = require('mongodb');
 const cors = require('cors');
-const fetch = require('node-fetch'); // 👈 NUEVO: para hacer peticiones HTTP
+const fetch = require('node-fetch');
 require('dotenv').config();
 
 const app = express();
@@ -17,6 +17,9 @@ const bot = new Telegraf(BOT_TOKEN);
 
 let moviesCollection;
 
+// ============================================
+// CONEXIÓN A MONGODB
+// ============================================
 async function connectDB() {
     const client = new MongoClient(MONGODB_URI);
     await client.connect();
@@ -31,44 +34,87 @@ async function getStreamUrl(telegramFileId) {
 }
 
 // ============================================
-// NUEVO: PROXY DE STREAMING (EVITA DESCARGA)
+// PROXY DE STREAMING MEJORADO (CON SOPORTE RANGE)
 // ============================================
 app.get('/api/stream/:id', async (req, res) => {
     try {
         const { id } = req.params;
-        const movie = await moviesCollection.findOne({ _id: new ObjectId(id) });
-        
+
+        const movie = await moviesCollection.findOne({
+            _id: new ObjectId(id)
+        });
+
         if (!movie) {
-            return res.status(404).json({ success: false, error: 'No encontrada' });
+            return res.status(404).json({
+                success: false,
+                error: 'No encontrada'
+            });
         }
-        
-        // Obtener URL de Telegram
-        const file = await bot.telegram.getFile(movie.telegramFileId);
-        const telegramUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${file.file_path}`;
-        
-        // Hacer fetch al video de Telegram
-        const response = await fetch(telegramUrl);
-        
-        // Headers CORRECTOS para streaming (NO descarga)
-        res.setHeader('Content-Type', 'video/mp4');
+
+        const file = await bot.telegram.getFile(
+            movie.telegramFileId
+        );
+
+        const telegramUrl =
+            `https://api.telegram.org/file/bot${BOT_TOKEN}/${file.file_path}`;
+
+        const headers = {};
+
+        if (req.headers.range) {
+            headers.Range = req.headers.range;
+        }
+
+        const response = await fetch(telegramUrl, {
+            headers
+        });
+
+        const contentType =
+            response.headers.get('content-type') ||
+            'video/mp4';
+
+        const contentLength =
+            response.headers.get('content-length');
+
+        const contentRange =
+            response.headers.get('content-range');
+
+        const statusCode =
+            req.headers.range ? 206 : 200;
+
+        res.status(statusCode);
+
+        res.setHeader('Content-Type', contentType);
         res.setHeader('Accept-Ranges', 'bytes');
-        res.setHeader('Content-Disposition', 'inline'); // 👈 CLAVE: inline NO attachment
-        res.setHeader('Cache-Control', 'no-cache');
-        
-        // Enviar el video como stream
+
+        if (contentLength) {
+            res.setHeader(
+                'Content-Length',
+                contentLength
+            );
+        }
+
+        if (contentRange) {
+            res.setHeader(
+                'Content-Range',
+                contentRange
+            );
+        }
+
         response.body.pipe(res);
-        
+
     } catch (error) {
-        console.error('Proxy error:', error);
-        res.status(500).json({ success: false, error: error.message });
+        console.error('Stream Error:', error);
+
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
     }
 });
 
 // ============================================
-// ENDPOINTS ORIGINALES (sin cambios)
+// CATÁLOGO
 // ============================================
-
-// Catálogo
 app.get('/api/catalog', async (req, res) => {
     try {
         const movies = await moviesCollection
@@ -96,7 +142,9 @@ app.get('/api/catalog', async (req, res) => {
     }
 });
 
-// Película específica
+// ============================================
+// PELÍCULA ESPECÍFICA
+// ============================================
 app.get('/api/movie/:id', async (req, res) => {
     try {
         const { id } = req.params;
@@ -124,7 +172,9 @@ app.get('/api/movie/:id', async (req, res) => {
     }
 });
 
-// Búsqueda
+// ============================================
+// BÚSQUEDA
+// ============================================
 app.get('/api/search', async (req, res) => {
     try {
         const { q } = req.query;
@@ -146,17 +196,23 @@ app.get('/api/search', async (req, res) => {
     }
 });
 
-// Health check (para Render)
+// ============================================
+// HEALTH CHECK (para Render)
+// ============================================
 app.get('/health', (req, res) => {
     res.status(200).send('OK');
 });
 
-// Raíz
+// ============================================
+// RAÍZ
+// ============================================
 app.get('/', (req, res) => {
     res.json({ success: true, message: 'Dex TV API Online' });
 });
 
-// Iniciar servidor
+// ============================================
+// INICIAR SERVIDOR
+// ============================================
 app.listen(PORT, async () => {
     await connectDB();
     console.log(`🚀 API corriendo en puerto ${PORT}`);
